@@ -1,6 +1,10 @@
 import streamlit as st
+import pandas as pd
 from streamlit_folium import st_folium
-import folium
+from map_generator import create_argo_map
+from database_manager import get_all_argo_data, insert_data, is_data_present, ensure_table_exists
+from data_handler import process_nc_data
+import os
 
 st.set_page_config(
     layout="wide",
@@ -8,103 +12,82 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-if 'show_chatbot' not in st.session_state:
-    st.session_state.show_chatbot = True
-
-if 'messages' not in st.session_state:
-    st.session_state.messages = []
+ensure_table_exists()
 
 st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .reportview-container .main {
-        padding: 0;
-    }
-    .chatbot-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-top: 10px;
-        padding-bottom: 10px;
-    }
-    .chatbot-container {
-        display: flex;
-        flex-direction: column;
-        height: 80vh;
-        background-color: #dcdcdc; /* Light gray background */
-        padding: 10px;
-        border-radius: 10px;
-        border-left: 1px solid #ddd; /* Thin white margin */
-    }
-    .stChatInput {
-        margin-top: auto;
-    }
-    .chat-history-container {
-        flex-grow: 1;
-        overflow-y: auto;
-    }
-    .stButton>button {
-        background: none;
-        border: none;
-        font-size: 1.5rem;
-        cursor: pointer;
-        padding: 0;
-    }
+        #MainMenu, footer, .stAppDeployButton {
+            visibility: hidden;
+        }
+        .block-container {
+            padding: 2rem 1rem 1rem 1rem !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 
-moored_buoy_locations = {
-    "AD06": {"coords": [18.5, 67], "color": "darkblue", "icon": "anchor"},
-    "AD07": {"coords": [15, 68], "color": "darkblue", "icon": "anchor"},
-    "AD08": {"coords": [12, 68], "color": "darkblue", "icon": "anchor"},
-    "AD10": {"coords": [10.3, 72.58], "color": "darkblue", "icon": "anchor"},
-    "CALVAL": {"coords": [10.5, 72.1], "color": "red", "icon": "anchor"},
-    "CB02": {"coords": [10.89, 72.2], "color": "red", "icon": "anchor"},
-    "CAU19": {"coords": [9, 72], "color": "red", "icon": "anchor"},
-    "CB01": {"coords": [9, 90], "color": "red", "icon": "anchor"},
-    "BD10": {"coords": [16, 87], "color": "green", "icon": "anchor"},
-    "BD11": {"coords": [13.5, 84], "color": "green", "icon": "anchor"},
-    "BD13": {"coords": [14, 86.5], "color": "green", "icon": "anchor"},
-    "BD12": {"coords": [10.7, 93.7], "color": "green", "icon": "anchor"},
-    "BD14": {"coords": [6.5, 88.3], "color": "green", "icon": "anchor"},
-}
-
-AWS_locations = {
-    "AWS1": {"coords": [9.96194, 76.28306], "color": "blue", "icon": "cloud"},
-    "AWS2": {"coords": [11.04028, 74.97611], "color": "blue", "icon": "cloud"},
-    "AWS3": {"coords": [22.54056, 88.3025], "color": "blue", "icon": "cloud"},
-}
-
-Drifting_buoy_locations = {
-    "I300534064138620": {"coords": [1.2659416, 94.2979406], "color": "orange", "icon": "life-ring"},
-    "I300534064139130": {"coords": [-59.6781261, 34.2363898], "color": "orange", "icon": "life-ring"},
-    "IN0017": {"coords": [4.885, 72.9357], "color": "orange", "icon": "life-ring"},
-    "AR020220830": {"coords": [6.3439, 80.0438], "color": "orange", "icon": "life-ring"},
-    "IN0038": {"coords": [15.4683, -93.3828], "color": "orange", "icon": "life-ring"},
-    "IN0035": {"coords": [16.9798, 69.4158], "color": "orange", "icon": "life-ring"},
-    "IN0030": {"coords": [15.9896, 72.5854], "color": "orange", "icon": "life-ring"},
-    "I300534064138600": {"coords": [-12.0335904, 987.2484693], "color": "orange", "icon": "life-ring"},
-}
+if 'argo_data' not in st.session_state:
+    st.session_state.argo_data = get_all_argo_data()
+if 'show_chatbot' not in st.session_state:
+    st.session_state.show_chatbot = True
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+if 'show_moored_buoys' not in st.session_state:
+    st.session_state.show_moored_buoys = False
+if 'show_AWS' not in st.session_state:
+    st.session_state.show_AWS = False
+if 'show_drifting_buoys' not in st.session_state:
+    st.session_state.show_drifting_buoys = False
 
 with st.sidebar:
     st.header("Insitu Data")
-
-    if 'show_moored_buoys' not in st.session_state:
-        st.session_state.show_moored_buoys = False
-
-    if 'show_tide_gauges' not in st.session_state:
-        st.session_state.show_AWS = False
-
-    if 'show_drifting_buoys' not in st.session_state:
-        st.session_state.show_drifting_buoys = False
-
-    st.session_state.show_moored_buoys = st.checkbox("Moored Buoy", value=st.session_state.show_moored_buoys)
-    st.session_state.show_AWS = st.checkbox("AWS", value=st.session_state.show_AWS)
-    st.session_state.show_drifting_buoys = st.checkbox("Drifting Buoy", value=st.session_state.show_drifting_buoys)
+    show_moored_buoys = st.checkbox("Moored Buoy")
+    show_AWS = st.checkbox("AWS")
+    show_drifting_buoys = st.checkbox("Drifting Buoy")
     
     st.markdown("---")
     
+    st.header("ARGO Floats Filter")
+
+    if not st.session_state.argo_data.empty:
+        all_years = st.session_state.argo_data['timestamp'].dt.year.unique()
+        years_list = sorted(all_years, reverse=True)
+        
+        selected_year = st.selectbox(
+            "First, select a year:",
+            options=["Select a year..."] + years_list
+        )
+    else:
+        st.info("No ARGO data in database to filter.")
+        selected_year = "Select a year..."
+
+    region_selections = {}
+    if selected_year and selected_year != "Select a year...":
+        st.write("Next, select region(s):")
+        region_selections['arabian_sea'] = st.checkbox("Arabian Sea")
+        region_selections['bay_of_bengal'] = st.checkbox("Bay of Bengal")
+        region_selections['laccadive_sea'] = st.checkbox("Laccadive Sea")
+        region_selections['indian_ocean'] = st.checkbox("Indian Ocean")
+        region_selections['pacific_ocean'] = st.checkbox("Pacific Ocean")
+        region_selections['atlantic_ocean'] = st.checkbox("Atlantic Ocean")
+        region_selections['southern_ocean'] = st.checkbox("Southern Ocean")
+        region_selections['arctic_ocean'] = st.checkbox("Arctic Ocean")
+
+    st.markdown("---")
+
+    if not is_data_present():
+        st.warning("No ARGO data found in the database.")
+        google_drive_folder_id = "1wJzy0MNZpQpCoX-IxyD1dW_mCR4zUUBW"
+        if st.button("Ingest ARGO data from Google Drive"):
+            with st.spinner("Processing and ingesting data..."):
+                argo_data_df = process_nc_data(google_drive_folder_id)
+                if not argo_data_df.empty:
+                    insert_data(argo_data_df)
+                    st.success("Data ingestion complete!")
+                    del st.session_state.argo_data
+                    st.rerun()
+                else:
+                    st.error("Failed to ingest data. Check logs for details.")
+
     if st.session_state.show_chatbot:
         if st.button("Hide Chatbot"):
             st.session_state.show_chatbot = False
@@ -121,53 +104,49 @@ else:
     col2 = None
 
 with col1:
-    m = folium.Map(
-        location=[5, 80],
-        zoom_start=5,
-        min_zoom=3,
-        max_bounds=True
+    df_to_display = pd.DataFrame()
+    
+    if (selected_year and selected_year not in ["All", "Select a year..."] and any(region_selections.values())):
+        df_filtered = st.session_state.argo_data.copy()
+        df_filtered = df_filtered[df_filtered['timestamp'].dt.year == selected_year]
+        
+        bboxes = {
+            'arabian_sea': [50, 5, 78, 25],
+            'bay_of_bengal': [80, 5, 100, 23],
+            'laccadive_sea': [70, 5, 80, 15],
+            'indian_ocean': [20, -60, 120, 30],
+            'atlantic_ocean': [-70, -60, 20, 60],
+            'southern_ocean': [-180, -90, 180, -60],
+            'arctic_ocean': [-180, 60, 180, 90]
+        }
+        
+        combined_mask = pd.Series(False, index=df_filtered.index)
+        for region, selected in region_selections.items():
+            if selected:
+                if region == 'pacific_ocean':
+                    mask = (df_filtered['longitude'] >= 120) | (df_filtered['longitude'] <= -70)
+                    combined_mask |= mask
+                elif region in bboxes:
+                    box = bboxes[region]
+                    mask = ((df_filtered['longitude'].between(box[0], box[2])) & (df_filtered['latitude'].between(box[1], box[3])))
+                    combined_mask |= mask
+        
+        df_to_display = df_filtered[combined_mask]
+
+    filtered_argo_locations = []
+    if not df_to_display.empty:
+        filtered_argo_locations = list(df_to_display[['id', 'latitude', 'longitude']].itertuples(index=False, name=None))
+    
+    st.info(f"Displaying {len(filtered_argo_locations)} of {len(st.session_state.argo_data)} total ARGO floats.")
+
+    m = create_argo_map(
+        show_moored_buoys=show_moored_buoys,
+        show_AWS=show_AWS,
+        show_drifting_buoys=show_drifting_buoys,
+        argo_locations=filtered_argo_locations
     )
-
-    folium.TileLayer(
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-        name='Esri World Imagery',
-        max_zoom=18,
-        control=False
-    ).add_to(m)
-
-    if st.session_state.show_moored_buoys:
-        for buoy_id, data in moored_buoy_locations.items():
-            tooltip_html = f'<div style="font-family: Arial; font-size: 14px; padding: 5px;"><b>{buoy_id}</b></div>'
-            folium.Marker(
-                location=data["coords"],
-                tooltip=folium.Tooltip(tooltip_html),
-                icon=folium.Icon(color=data["color"], icon=data["icon"], prefix='fa')
-            ).add_to(m)
-
-    if st.session_state.show_AWS:
-        for aws_id, data in AWS_locations.items():
-            tooltip_html = f'<div style="font-family: Arial; font-size: 14px; padding: 5px;"><b>{aws_id}</b></div>'
-            folium.Marker(
-                location=data["coords"],
-                tooltip=folium.Tooltip(tooltip_html),
-                icon=folium.Icon(color=data["color"], icon=data["icon"], prefix='fa')
-            ).add_to(m)
-
-    if st.session_state.show_drifting_buoys:
-        for buoy_id, data in Drifting_buoy_locations.items():
-            tooltip_html = f'<div style="font-family: Arial; font-size: 14px; padding: 5px;"><b>{buoy_id}</b></div>'
-            folium.Marker(
-                location=data["coords"],
-                tooltip=folium.Tooltip(tooltip_html),
-                icon=folium.Icon(color=data["color"], icon=data["icon"], prefix='fa')
-            ).add_to(m)
-
-    st_data = st_folium(m, width="100%", height=700)
-
-    if st_data.get("last_clicked"):
-        lat = st_data["last_clicked"]["lat"]
-        lon = st_data["last_clicked"]["lng"]
+    
+    st_folium(m, width="100%", height=720)
 
 if st.session_state.show_chatbot and col2 is not None:
     with col2:
@@ -176,16 +155,16 @@ if st.session_state.show_chatbot and col2 is not None:
             with header_col:
                 st.header("Chatbot")
             with button_col:
-                if st.button("X", key="hide_chatbot_button"):
+                if st.button("X", key="hide_chatbot_button_main"):
                     st.session_state.show_chatbot = False
                     st.rerun()
 
-            chat_history_container = st.container(height=600)
+            chat_history_container = st.container(height=650)
             with chat_history_container:
                 for message in st.session_state.messages:
                     with st.chat_message(message["role"]):
                         st.markdown(message["content"])
 
-            if prompt := st.chat_input("Enter your query for the ARGO data model..."):
+            if prompt := st.chat_input("Enter your query..."):
                 st.session_state.messages.append({"role": "user", "content": prompt})
                 st.rerun()

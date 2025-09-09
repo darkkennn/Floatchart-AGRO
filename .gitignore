@@ -7,5 +7,10 @@ wheels/
 *.egg-info
 .python-version
 
+#secrets
+.streamlit/secrets.toml
+token.json
+client_secret_899458151364-hekjtoi1oc8p0rfpv792hgvom9p0qm24.apps.googleusercontent.com.json
+
 # Virtual environments
 .venv
